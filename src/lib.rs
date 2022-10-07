@@ -14,6 +14,11 @@ pub use properties::*;
 mod transport;
 pub use transport::*;
 
+#[cfg(feature = "glib")]
+pub mod glib;
+#[cfg(feature = "tokio")]
+pub mod tokio;
+
 #[doc(alias = "jack_nframes_t")]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
