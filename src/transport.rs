@@ -2,6 +2,12 @@ use std::mem::MaybeUninit;
 
 use crate::{sys, ClientHandle, Error, Frames, Time};
 
+/// Helper structure to control the [JACK
+/// transport](https://jackaudio.org/api/transport-design.html).
+///
+/// This separate object exists becuse transport functions can be called from both the client main
+/// thread and the process thread. Use [`Client::transport`](crate::Client::transport) or
+/// [`ProcessScope::transport`](crate::ProcessScope::transport) to get a handle.
 pub struct Transport<'c> {
     client: &'c ClientHandle,
 }
@@ -189,12 +195,14 @@ impl TransportPosition {
     pub fn video_offset(&self) -> u32 {
         self.0.video_offset
     }
+    #[cfg_attr(docsrs, doc(cfg(feature = "v_1_9_19")))]
     #[cfg(feature = "v1_9_19")]
     #[doc(alias = "JackTickDouble")]
     #[inline]
     pub fn has_tick_double(&self) -> bool {
         (self.0.valid & sys::jack_position_bits_t_JackTickDouble) != 0
     }
+    #[cfg_attr(docsrs, doc(cfg(feature = "v_1_9_19")))]
     #[cfg(feature = "v1_9_19")]
     #[inline]
     pub fn tick_double(&self) -> f64 {
@@ -253,12 +261,14 @@ impl TransportPosition {
     pub fn unset_video_offset(&mut self) {
         self.0.valid &= !sys::jack_position_bits_t_JackVideoFrameOffset;
     }
+    #[cfg_attr(docsrs, doc(cfg(feature = "v_1_9_19")))]
     #[cfg(feature = "v1_9_19")]
     #[inline]
     pub fn set_tick_double(&mut self, tick_double: f64) {
         self.0.valid |= sys::jack_position_bits_t_JackTickDouble;
         self.0.tick_double = tick_double;
     }
+    #[cfg_attr(docsrs, doc(cfg(feature = "v_1_9_19")))]
     #[cfg(feature = "v1_9_19")]
     #[inline]
     pub fn unset_tick_double(&mut self) {

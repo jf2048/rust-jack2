@@ -13,6 +13,16 @@ use crate::{
     ClientHandle, Error, Frames, LatencyMode, Uuid,
 };
 
+/// A reference to a JACK port owned by any client on the current server.
+///
+/// References are short lived and should not be stored. Only port IDs or port names should be
+/// stored by the client Then a reference to a port can be obtained with
+/// [`Client::port_by_id`](crate::Client::port_by_id) or
+/// [`Client::port_by_name`](crate::Client::port_by_name) whe.
+///
+/// Other clients can remove ports or close down at any time, so care should be taken to listen for
+/// [`PortUnregister`](crate::Notification::PortUnregister) notifications and avoid using [`Port`]
+/// objects after the port has been unregistered.
 #[doc(alias = "jack_port_t")]
 #[repr(transparent)]
 #[derive(Debug)]
@@ -170,17 +180,26 @@ impl<'c> Port<'c> {
             library().jack_port_set_latency_range(self.port.as_ptr(), mode.into_jack(), &mut range);
         }
     }
+    /// Returns the C pointer corresponding to this port.
     #[inline]
     pub fn as_ptr(&self) -> NonNull<sys::jack_port_t> {
         self.port
     }
 }
 
+/// A unique ID to track JACK ports.
+///
+/// Port [notifications](crate::Notification) are the only place where IDs are used to track ports.
+/// Clients can store this ID as a means to track external ports.
 #[doc(alias = "jack_port_id_t")]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct PortId(pub(crate) NonZeroU32);
 
+/// A set of flags describing JACK ports.
+///
+/// The `is_input` and `is_output` flags are mutually exclusive, and ports will return `true` for
+/// only one of them.
 #[doc(alias = "JackPortFlags")]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
@@ -212,6 +231,7 @@ impl PortFlags {
     pub fn is_terminal(&self) -> bool {
         (self.0 & sys::JackPortFlags_JackPortIsTerminal) != 0
     }
+    /// Returns the mode corresponding to the flags.
     #[inline]
     pub fn mode(&self) -> PortMode {
         if self.is_input() {
@@ -231,6 +251,14 @@ impl From<PortFlags> for sys::JackPortFlags {
     }
 }
 
+/// An ID representing common port types.
+///
+/// These bindings only support common port types implemented by the default jackd2 server and
+/// by pipewire-jack. Alternate JACK servers implementing custom types are not supported.
+///
+/// If a client needs to implement a custom type, the
+/// [`ProcessPort::as_ptr`](crate::ProcessPort::as_ptr) and
+/// [`ProcessScope::library`](crate::ProcessScope::library) methods are provided to give access to the C FFI.
 #[doc(alias = "jack_port_type_id_t")]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PortType {
@@ -247,12 +275,17 @@ impl PortType {
         };
         unsafe { CStr::from_bytes_with_nul_unchecked(ty) }
     }
+    /// Returns a human-readable string describing the port type.
     #[inline]
     pub fn as_str(&self) -> &'static str {
         self.as_cstr().to_str().unwrap()
     }
 }
 
+/// The input/output mode of the port.
+///
+/// Corresponds to the same flags in [`PortFlags`]. Only used by [`PortInfo`](crate::PortInfo) when
+/// defining ports, to ensure only one mode is selected.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PortMode {
     Input,

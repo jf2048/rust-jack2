@@ -29,6 +29,9 @@ impl ClientHandle {
 }
 
 bitflags::bitflags! {
+    /// Options for starting a new client.
+    ///
+    /// See also [`ClientBuilder::flags`].
     #[doc(alias = "JackOptions")]
     #[doc(alias = "jack_options_t")]
     #[derive(Default)]
@@ -53,12 +56,31 @@ impl ThreadGuard {
     }
 }
 
+/// Client interaction with a Rust async runtime.
+///
+/// This trait must be implemented by users of [`Client`]. Sample implementations of this trait are
+/// provided by the `tokio` and `glib` feature flags.
+/// repository for sample implementations.
 pub trait MainThreadContext {
+    /// Spawn a future on the current thread.
+    ///
+    /// The semantics of this method should match
+    /// [`tokio::task::spawn_local`](https://docs.rs/tokio/1/tokio/task/fn.spawn_local.html).
     fn spawn_local<F: std::future::Future<Output = ()> + 'static>(&self, fut: F);
+    /// A stream type that can be used to run a task at specified intervals.
+    ///
+    /// The semantics of this stream should match
+    /// [`tokio_stream::wrappers::IntervalStream`](https://docs.rs/tokio-stream/0.1.10/tokio_stream/wrappers/struct.IntervalStream.html),
+    /// but should always return `()`.
     type IntervalStream: futures_core::Stream<Item = ()> + 'static;
+    /// Create a [`Stream`](futures_core::Stream) that yields with intervals of `period`.
+    ///
+    /// The semantics of this method should match
+    /// [`tokio::time::interval`](https://docs.rs/tokio/1/tokio/time/fn.interval.html).
     fn interval(&self, period: Duration) -> Self::IntervalStream;
 }
 
+/// A builder for constructing [`Client`].
 #[derive(Debug)]
 #[must_use]
 pub struct ClientBuilder<Context>
@@ -96,6 +118,7 @@ where
             context,
         }
     }
+    /// Sets flags for connecting to the JACK server.
     #[inline]
     pub fn flags(mut self, flags: ClientOptions) -> Self {
         self.flags |= flags.bits();
@@ -108,6 +131,10 @@ where
         self.flags |= sys::JackOptions_JackServerName;
         self
     }
+    /// Create the JACK client.
+    ///
+    /// Returns `Err` if connecting to the server failed or if the JACK shared library failed to
+    /// load.
     #[doc(alias = "jack_client_open")]
     pub fn build<PortData>(self) -> crate::Result<(InactiveClient<Context, PortData>, Status)>
     where
@@ -177,6 +204,7 @@ where
 }
 
 bitflags::bitflags! {
+    /// Set of flags to use when creating ports.
     #[doc(alias = "JackPortFlags")]
     #[derive(Default)]
     pub struct PortCreateFlags: sys::JackPortFlags {
@@ -189,6 +217,7 @@ bitflags::bitflags! {
     }
 }
 
+/// Status returned from JACK client creation.
 #[doc(alias = "JackStatus")]
 #[doc(alias = "jack_status_t")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,6 +245,9 @@ impl From<Status> for sys::jack_status_t {
 }
 
 bitflags::bitflags! {
+    /// Flags to use when activating a JACK client.
+    ///
+    /// Used in [`InactiveClient::activate`].
     #[derive(Default)]
     pub struct ActivateFlags: u32 {
         #[doc(alias = "jack_set_latency_callback")]
@@ -229,6 +261,10 @@ bitflags::bitflags! {
     }
 }
 
+/// An opaque JACK client handle.
+///
+/// This structure contains common methods available to both [`InactiveClient`] and
+/// [`ActiveClient`].
 #[doc(alias = "jack_client_t")]
 #[derive(Debug)]
 pub struct Client<Context, PortData = ()>
@@ -565,6 +601,7 @@ where
                 .jack_set_sync_timeout(self.client.as_ptr(), timeout.as_micros())
         })
     }
+    /// Returns a object that can used to control the JACK transport.
     #[inline]
     pub fn transport(&self) -> Transport {
         Transport::new(&self.client)
@@ -675,10 +712,12 @@ where
                 .jack_reset_max_delayed_usecs(self.client.as_ptr());
         }
     }
+    /// Returns the C pointer corresponding to this client.
     #[inline]
     pub fn as_ptr(&self) -> NonNull<sys::jack_client_t> {
         self.client.client
     }
+    /// Returns the dynamically loaded JACK library currently used by this client.
     #[inline]
     pub fn library(&self) -> &sys::Jack {
         self.client.lib
@@ -698,6 +737,7 @@ where
     }
 }
 
+/// An error that occurred when attempting to register a port.
 #[derive(Debug, Copy, Clone)]
 pub struct PortRegisterError(usize);
 
@@ -713,14 +753,18 @@ impl std::fmt::Display for PortRegisterError {
     }
 }
 
+/// An error that occurred when attempting to activate a client.
 pub struct ActivateError<Context, Process, Notify>
 where
     Context: MainThreadContext,
     Process: ProcessHandler,
     Notify: NotificationHandler,
 {
+    /// The client passed when calling [`activate`](InactiveClient::activate).
     pub client: InactiveClient<Context, Process::PortData>,
+    /// The process handler passed when calling [`activate`](InactiveClient::activate).
     pub process_handler: Option<Process>,
+    /// The notification handler passed when calling [`activate`](InactiveClient::activate).
     pub notification_handler: Option<Notify>,
 }
 
@@ -754,6 +798,10 @@ where
 {
 }
 
+/// An opaque JACK client handle for an inactive client.
+///
+/// Callers should set up their client for operation and then call
+/// [`activate`](InactiveClient::activate).
 #[doc(alias = "jack_client_t")]
 #[derive(Debug)]
 #[repr(transparent)]
@@ -903,12 +951,16 @@ where
     }
 }
 
+/// An error that occurred when attempting to deactivate a client.
+///
+/// Contains the active client.
 pub struct DeactivateError<Context, Process, Notify>
 where
     Context: MainThreadContext,
     Process: ProcessHandler,
     Notify: NotificationHandler,
 {
+    /// The client passed when calling [`deactivate`](ActiveClient::deactivate).
     pub client: ActiveClient<Context, Process, Notify>,
 }
 
@@ -942,6 +994,10 @@ where
 {
 }
 
+/// An opaque JACK client handle for an active client.
+///
+/// Contains methods that can only be used by active clients. Call [`Self::deactivate`] to get an
+/// [`InactiveClient`] back.
 #[doc(alias = "jack_client_t")]
 #[derive(Debug)]
 pub struct ActiveClient<Context, Process, Notify>
@@ -1062,16 +1118,26 @@ where
     }
 }
 
+/// Builder structure for registering ports.
+///
+/// Used with [`Client::register_ports`].
 #[derive(Clone, Debug)]
 pub struct PortInfo<'s, PortData: Send + 'static> {
     pub name: &'s str,
     pub type_: PortType,
     pub mode: PortMode,
     pub flags: PortCreateFlags,
+    /// User-supplied data associated with this port.
+    ///
+    /// Since the process thread cannot allocate data on the heap, this field should be used to
+    /// store any data required by this port to run its processing. This data must be [`Send`] so
+    /// it can be sent into the process thread, where it can be accessed by calling
+    /// [`ProcessPort::data`](crate::ProcessPort::data).
     pub data: PortData,
 }
 
 impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
+    /// Convenience constructor for creating audio input ports.
     #[inline]
     pub fn audio_in(name: &'s str, data: PortData) -> Self {
         Self {
@@ -1082,6 +1148,7 @@ impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
             data,
         }
     }
+    /// Convenience constructor for creating audio output ports.
     #[inline]
     pub fn audio_out(name: &'s str, data: PortData) -> Self {
         Self {
@@ -1092,6 +1159,7 @@ impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
             data,
         }
     }
+    /// Convenience constructor for creating MIDI input ports.
     #[inline]
     pub fn midi_in(name: &'s str, data: PortData) -> Self {
         Self {
@@ -1102,6 +1170,7 @@ impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
             data,
         }
     }
+    /// Convenience constructor for creating MIDI output ports.
     #[inline]
     pub fn midi_out(name: &'s str, data: PortData) -> Self {
         Self {
@@ -1112,6 +1181,16 @@ impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
             data,
         }
     }
+    /// Set the flags for creating this port.
+    ///
+    /// This method is meant to be used with the builder pattern:
+    ///
+    /// ```ignore
+    /// client.register_ports([
+    ///     PortInfo::audio_in("in L", ()).flags(PortCreateFlags::CAN_MONITOR),
+    ///     PortInfo::audio_in("in R", ()).flags(PortCreateFlags::CAN_MONITOR),
+    /// ]);
+    /// ```
     #[inline]
     pub fn flags(mut self, flags: PortCreateFlags) -> Self {
         self.flags = flags;
@@ -1119,6 +1198,10 @@ impl<'s, PortData: Send + 'static> PortInfo<'s, PortData> {
     }
 }
 
+/// A key uniquely identifying a port owned by a local [`Client`](crate::Client).
+///
+/// Represented internally by a 64-bit UUID. This value should be used as to reference a client's
+/// own ports.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct OwnedPortUuid(Uuid);
@@ -1130,6 +1213,7 @@ impl OwnedPortUuid {
         let uuid = client.lib.jack_port_uuid(ptr);
         Some(Self(Uuid(NonZeroU64::new(uuid)?)))
     }
+    /// Returns the unique ID of this port.
     #[inline]
     pub fn uuid(&self) -> Uuid {
         self.0
