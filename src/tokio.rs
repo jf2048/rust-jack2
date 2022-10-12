@@ -1,6 +1,12 @@
+//! Optional module containing a [`MainThreadContext`](crate::MainThreadContext) implementation for
+//! [`tokio`](https://tokio.rs/).
+
+#![cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
+
 use futures_util::StreamExt;
 use tokio_stream::wrappers::IntervalStream;
 
+/// A wrapper for a Tokio stream that yields at specific intervals.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct TokioIntervalStream(IntervalStream);
@@ -21,6 +27,9 @@ impl futures_core::Stream for TokioIntervalStream {
     }
 }
 
+/// A context for running a JACK client on the Tokio runtime.
+///
+/// Should be used with [`ClientBuilder`](crate::ClientBuilder).
 #[derive(Debug, Default)]
 pub struct TokioContext;
 

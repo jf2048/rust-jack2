@@ -31,3 +31,7 @@ v1_9_19 = []
 [package.metadata.system-deps.jack]
 version = "1.9.12"
 v1_9_19 = { version = "1.9.19" }
+
+[package.metadata.docs.rs]
+features = ["glib", "tokio"]
+rustdoc-args = ["--cfg", "docsrs"]

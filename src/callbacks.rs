@@ -10,8 +10,50 @@ use std::{
     os::raw::{c_char, c_int, c_void},
 };
 
+/// Handler for the process thread.
+///
+/// Implementations of this trait are passed to
+/// [`InactiveClient::activate`](crate::InactiveClient::activate). The object will be
+/// passed into a separate real-time process thread, and will have all of its methods called there.
+/// Because of this, implementations must be [`Send`].
+///
+/// Due to the [`Send`] requirement, and the additional restrictions on allocations and blocking
+/// inside [`process`](Self::process), there are heavy limits on what can be contained in structs
+/// implementing this trait (and in the associated `PortData` type). The following types are the
+/// only ones recommended for concurrent use in real-time threads:
+///
+/// - [`Arc`](std::sync::Arc) containing an integer type from [`std::sync::atomic`].
+/// - A bounded lock-free channel or ring buffer such as
+///   [`crossbeam::channel::bounded`](https://docs.rs/crossbeam/0.8/crossbeam/channel/fn.bounded.html),
+///   [`flume::bounded`](https://docs.rs/flume/0.10/flume/fn.bounded.html),
+///   [`ringbuf`](https://docs.rs/ringbuf), or [`rtrb`](https://docs.rs/rtrb/). The messages should
+///   not contain any heap allocated data, unless it can be guaranteed the data will not be
+///   allocated or deallocated in the process thread.
+/// - <code>[Arc](std::sync::Arc)&lt;[AtomicTripleBuffer](atb::AtomicTripleBuffer)></code> is
+///   recommended if any complex heap data needs to be periodically allocated/reallocated and
+///   exchanged with the process thread.
+/// - Smart pointer types that can be garbage collected on a different thread, such as in
+///   [`basedrop`](https://docs.rs/basedrop/).
+///
+/// Do not use unbounded channels, mutexes, or locks of any kind to exchange data with the process
+/// thread.
 #[allow(unused)]
 pub trait ProcessHandler: Send + 'static {
+    /// Associated data for ports.
+    ///
+    /// Any per-port data that [`Self::process`] needs to access should be contained in this type.
+    /// Because the process thread cannot allocate or deallocate any data, any storage that the
+    /// port needs should be fully allocated to its max capacity when constructing this type. The
+    /// port data can be accessed with [`ProcessPort::data`](crate::ProcessPort::data).
+    ///
+    /// Objects of this type will be sent into the process thread and will only be readable and
+    /// writable from there. To communicate with the port from other threads, the data should
+    /// contain communication primitives that don't block or dynamically allocate, such as a
+    /// bounded channel receiver or an [`Arc`](std::sync::Arc) containing an atomic lock-free type
+    /// such as [`AtomicTripleBuffer`](atb::AtomicTripleBuffer). See the documentation on
+    /// [`ProcessHandler`] for more information.
+    ///
+    /// Clients that support multiple port types will want to make this an enum.
     type PortData: Send + 'static;
     #[doc(alias = "JackThreadInitCallback")]
     #[doc(alias = "jack_set_thread_init_callback")]
@@ -51,6 +93,9 @@ impl ProcessHandler for () {
     type PortData = ();
 }
 
+/// A simple [`ProcessHandler`] for running the process callback.
+///
+/// Intended for simple clients. All other process thread events are ignored.
 pub struct ClosureProcessHandler<Func, PortData = ()>(Func, PhantomData<PortData>)
 where
     Func: for<'a> FnMut(ProcessScope<'a, PortData>) -> ControlFlow<(), ()> + Send + 'static,
@@ -61,6 +106,7 @@ where
     Func: for<'a> FnMut(ProcessScope<'a, PortData>) -> ControlFlow<(), ()> + Send + 'static,
     PortData: Send + 'static,
 {
+    /// Creates a new process handler running `func` as the process callback.
     #[inline]
     pub fn new(func: Func) -> Self {
         Self(func, PhantomData)
@@ -79,6 +125,10 @@ where
     }
 }
 
+/// Data type for client notification messages.
+///
+/// All enum variants correspond to a method on [`NotificationHandler`]. These messages will all
+/// be received on the thread the client was created on.
 #[derive(Debug, Clone)]
 pub enum Notification {
     #[doc(alias = "JackShutdownCallback")]
@@ -136,8 +186,23 @@ pub enum Notification {
     },
 }
 
+/// Handler for notifications on the client thread.
+///
+/// Implementations of this trait are passed to
+/// [`InactiveClient::activate`](crate::InactiveClient::activate). Notifications are optional,
+/// informational messages sent by the JACK server when an event occurs. All methods on this trait
+/// will be called on the main client thread.
 #[allow(unused)]
 pub trait NotificationHandler: 'static {
+    /// Dispatch a single notification.
+    ///
+    /// This method is the only method called directly by the client. The default implementation
+    /// forwards the message to the rest of the methods on this trait. If this method is
+    /// implemented then no other methods on this trait need to be implemented.
+    ///
+    /// Users should not normally need to implement this, unless the notification needs to be sent
+    /// to another thread. Simple implementations can use [`ClosureNotificationHandler`] instead of
+    /// manually implementing this method.
     #[inline]
     fn notification(&mut self, msg: Notification) {
         use Notification::*;
@@ -231,9 +296,14 @@ pub trait NotificationHandler: 'static {
 
 impl NotificationHandler for () {}
 
+/// A simple implementation of [`NotificationHandler`] that passes all notifications to a function
+/// closure.
 pub struct ClosureNotificationHandler<F: FnMut(Notification) + 'static>(F);
 
 impl<F: FnMut(Notification) + 'static> ClosureNotificationHandler<F> {
+    /// Create a new notification handler.
+    ///
+    /// The handler simply forwards all notifications to `func`.
     #[inline]
     pub fn new(func: F) -> Self {
         Self(func)

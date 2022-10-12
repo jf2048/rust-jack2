@@ -1,3 +1,81 @@
+//! # jack2
+//!
+//! A safe Rust binding for [JACK Audio Connection Kit](https://jackaudio.org) with some advanced
+//! features.
+//!
+//! JACK is a pro-audio sound server for sending real-time audio between applications. The JACK API
+//! is provided in a C library that allows clients to connect to the server and start exchanging
+//! audio data. This crate provides safe Rust bindings for the C API. See the JACK
+//! [FAQ](https://jackaudio.org/faq/) and
+//! [Wiki](https://github.com/jackaudio/jackaudio.github.com/wiki) for more information the overall
+//! project. [Pipewire](https://pipewire.org/) is also supported, as it implements a compatible
+//! subset of the JACK API.
+//!
+//! JACK clients work by reading and filling audio buffers in real-time threads, that are scheduled
+//! by the server to produce audio at fixed intervals on a strict deadline. To avoid "skips" in the
+//! audio, real-time threads must make sure to only call functions that are thread-safe and
+//! real-time-safe. But the C API for JACK can be cumbersome to use, as the C language does not
+//! have a way to express which functions have those characteristics. Without careful reading of the
+//! documentation, it can lead to bugs and glitchy audio in clients.
+//!
+//! On the other hand, Rust has powerful tools built into the language to ensure thread-safety.
+//! This crate has been designed to make it difficult to accidentally call non-thread-safe and
+//! non-real-time-safe methods in real-time audio processing threads. Unfortunately, Rust does not
+//! have the ability to statically check if all methods are fully real-time-safe. While this crate
+//! does take steps to prevent users from calling non-real-time-safe JACK functions in the wrong
+//! context, care must still be taken not to accidentally call Rust functions from other libraries
+//! (including [`std`]) that might take too much time in real-time threads. Overall, using this crate
+//! should still provide some safety and usability enhancements over the C API, without adding any
+//! extra performance overhead.
+//!
+//! The goal of this binding is to have 100% safe API coverage for the subset of all API features
+//! supported by both [`jackd2`](https://github.com/jackaudio/jack2) and by
+//! [`pipewire-jack`](https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Config-JACK). These
+//! bindings will not support obscure or deprecated libjack features, such as internal clients,
+//! session management, netjack, client threads, or jackctl. Features present only in
+//! [`jackd1`](https://github.com/jackaudio/jack1) will not be supported. The JACK ringbuffer
+//! is also not supported; use one of the many native Rust ring buffer or bounded channel
+//! implementations instead.
+//!
+//! ## Usage
+//!
+//! Users of this API will typically start by using [`ClientBuilder`] to configure and open a
+//! connection to the JACK server. Then, the [`Client`] can be used to create "ports" to
+//! send/receive audio data. Clients usually need to supply a real-time-safe "process
+//! callback" to perform the actual reading and writing of audio data. This can be done either by
+//! implementing [`ProcessHandler::process`], or by using [`ClosureProcessHandler`]. The handler
+//! is then passed to [`InactiveClient::activate`] when configuring the client.
+//!
+//! Clients can add and remove ports using [`Client::register_ports`] and
+//! [`Client::unregister_ports`]. The mechanism used by these methods ensures that ports that are
+//! added/removed in a group are seen as an atomic update in the process thread. For complex
+//! clients that need to frequently add or remove ports (such as DAWs), this ensures that no audio
+//! skips, glitches or mid-frame cut-outs happen.
+//!
+//! Data required for processing the port can also be provided as a ["port
+//! data"](ProcessHandler::PortData) type at the time of port registration. This ensures that the
+//! process thread always has a reference to the data it needs to run the graph, and also ensures
+//! that this data is deallocated correctly when unregistering the port. That is, if a port is
+//! unregistered while the process cycle is running, the data is automatically sent back to the
+//! main thread and deallocated after the process cycle finishes.
+//!
+//! Clients can also make use of some advanced server features, including:
+//!
+//! - Controlling the global audio transport with [`Transport`].
+//! - Using [`NotificationHandler`] to receive events when the global server state changes.
+//! - Setting and retrieving [metadata] properties on clients and ports.
+//!
+//! See the documentation of [`Client`] for a full list of available API functionality.
+//!
+//! ## Prior Art
+//!
+//! The [`jack`](https://docs.rs/jack/) crate was written several years before the `jack2` crate,
+//! by a different author. The `jack2` crate is not based on it, but it does take inspiration from
+//! some concepts when it makes sense, and some type names are intentionally kept similar for ease
+//! of migration. The main difference to the `jack` crate is in how ports are handled, using the
+//! atomic updating strategy described in the above paragraphs. This crate could be compared to a
+//! complete rewrite of `jack`, with a cleaned-up API.
+
 pub mod sys;
 
 mod callbacks;
@@ -48,9 +126,11 @@ impl Time {
     pub fn now() -> Self {
         Self(unsafe { sys::library().jack_get_time() })
     }
+    /// Creates a time value from a value in microseconds.
     pub fn from_micros(usecs: u64) -> Self {
         Self(usecs)
     }
+    /// Returns the value in microseconds as a 64-bit unsigned integer.
     pub fn as_micros(&self) -> u64 {
         self.0
     }
@@ -71,6 +151,7 @@ impl TryFrom<std::time::Duration> for Time {
     }
 }
 
+/// Type representing a 64-bit unique identifier.
 #[doc(alias = "jack_uuid_t")]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -88,10 +169,12 @@ impl Uuid {
         sys::library().jack_free(ptr as *mut _);
         Some(uuid)
     }
+    /// Create a new unique identifier from a non-zero 64-bit unsigned integer.
     #[inline]
     pub fn new(uuid: std::num::NonZeroU64) -> Self {
         Self(uuid)
     }
+    /// Return the numeric value of the identifier.
     #[inline]
     pub fn value(&self) -> std::num::NonZeroU64 {
         self.0
@@ -150,12 +233,16 @@ impl Drop for JackStr {
     }
 }
 
+/// Error enum for all public errors in this crate.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A C string was passed without a valid nul-terminator.
     #[error(transparent)]
     InvalidCString(#[from] std::ffi::NulError),
+    /// The JACK library failed to load.
     #[error(transparent)]
     LibraryError(#[from] &'static libloading::Error),
+    /// A generic failure from a JACK API function.
     #[error(transparent)]
     Failure(#[from] Failure),
 }
@@ -178,6 +265,7 @@ impl Error {
     }
 }
 
+/// Result type for [`crate::Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[doc(alias = "jack_status_t")]

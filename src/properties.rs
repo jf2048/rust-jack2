@@ -8,6 +8,9 @@ use std::{
 
 use crate::{sys, Error, JackStr, Result, Uuid};
 
+/// A type for C-owned property keys.
+///
+/// Only used for the built-in property keys in [`crate::metadata`].
 #[derive(Debug)]
 pub struct PropertyKey(pub(crate) *const std::os::raw::c_char);
 
@@ -78,6 +81,7 @@ unsafe impl Send for PropertyDescription {}
 unsafe impl Sync for PropertyDescription {}
 
 impl PropertyDescription {
+    /// Returns the current subject of this property list.
     #[inline]
     pub fn subject(&self) -> Uuid {
         Uuid(unsafe { NonZeroU64::new_unchecked(self.0.subject) })
@@ -113,6 +117,9 @@ pub fn all_properties() -> Result<PropertyDescriptionList> {
     })
 }
 
+/// A list of [`PropertyDescription`]s.
+///
+/// The descriptions can be accessed through the [`Deref`] implementation.
 #[derive(Debug)]
 pub struct PropertyDescriptionList {
     ptr: *mut sys::jack_description_t,

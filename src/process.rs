@@ -15,6 +15,10 @@ use crate::{
     ClientHandle, Error, Frames, OwnedPortUuid, PortFlags, PortType, Time, Transport, Uuid,
 };
 
+/// A scope for performing operations in the process thread.
+///
+/// This object is passed to implementations of [`ProcessHandler`](crate::ProcessHandler). Its
+/// methods are a subset of JACK operations that are all guaranteed to be real-time-safe.
 #[derive(Debug)]
 pub struct ProcessScope<'scope, PortData> {
     pub(crate) client: &'scope ClientHandle,
@@ -60,10 +64,22 @@ impl<'scope, PortData> ProcessScope<'scope, PortData> {
             period: Duration::from_secs_f64(period_usecs as f64 * 1_000_000.),
         })
     }
+    /// Returns a object that can used to control the JACK transport.
     #[inline]
     pub fn transport(&self) -> Transport {
         Transport::new(self.client)
     }
+    /// Returns an iterator for each owned, registered port.
+    ///
+    /// The ports are returned in an unspecified order. Clients that only perform I/O in one
+    /// direction may be able to process all ports with one simple iteration; clients that perform
+    /// both input and output will want to call this method twice, once to only process the input
+    /// ports, and then a second time to process the output ports.
+    ///
+    /// More advanced clients needing a specific order may want to avoid using this method, and
+    /// instead store control and routing data atomically in the struct implementing
+    /// [`ProcessHandler`](crate::ProcessHandler) using port UUIDs. Then, call
+    /// [`Self::port_by_owned_uuid`] on the ports in order.
     #[inline]
     pub fn ports(&'scope self) -> impl Iterator<Item = ProcessPort<'scope, PortData>> + '_ {
         self.ports.ports.values().map(|port| ProcessPort {
@@ -71,6 +87,9 @@ impl<'scope, PortData> ProcessScope<'scope, PortData> {
             scope: self,
         })
     }
+    /// Looks up a port by UUID.
+    ///
+    /// Returns `None` if `port` is not registered.
     #[inline]
     pub fn port_by_owned_uuid(
         &'scope self,
@@ -81,16 +100,19 @@ impl<'scope, PortData> ProcessScope<'scope, PortData> {
             scope: self,
         })
     }
+    /// Returns the C pointer corresponding to the scope's client.
     #[inline]
     pub fn client_ptr(&self) -> NonNull<sys::jack_client_t> {
         self.client.client
     }
+    /// Returns the dynamically loaded JACK library currently used by the scope's client.
     #[inline]
     pub fn library(&self) -> &sys::Jack {
         self.client.lib
     }
 }
 
+/// An owned port accessible from [`ProcessScope`].
 #[derive(Debug)]
 pub struct ProcessPort<'scope, PortData> {
     port: &'scope ProcessPortInner<PortData>,
@@ -115,10 +137,25 @@ impl<'scope, PortData> ProcessPort<'scope, PortData> {
     pub fn flags(&self) -> PortFlags {
         self.port.ptr.flags
     }
+    /// Returns the port data registered with this port.
+    ///
+    /// The port data is stored in a [`RefCell`], which can safely be read or written to by
+    /// [`ProcessHandler`](crate::ProcessHandler) implementations.
+    ///
+    /// See [`ProcessHandler::PortData`](crate::ProcessHandler::PortData) for a description of how
+    /// to use port data.
     #[inline]
     pub fn data(&self) -> &RefCell<PortData> {
         &self.port.data
     }
+    /// Returns a buffer containing audio samples sent to this port for the current frame period.
+    ///
+    /// The buffer length will be equal to the number of frames returned by
+    /// [`ProcessScope::nframes`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if port is not an audio input port.
     #[doc(alias = "jack_port_get_buffer")]
     pub fn audio_in_buffer(&self) -> &[f32] {
         assert!(self.port.ptr.flags.is_input() && self.port.ptr.port_type == PortType::Audio);
@@ -131,6 +168,15 @@ impl<'scope, PortData> ProcessPort<'scope, PortData> {
             std::slice::from_raw_parts(buf as *const f32, self.scope.nframes as usize)
         }
     }
+    /// Returns a buffer for writing audio samples for the current frame period.
+    ///
+    /// The buffer length will be equal to the number of frames returned by
+    /// [`ProcessScope::nframes`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if port is not an audio output port, or if the buffer is still locked by a previous
+    /// [`RefMut`] returned from this method.
     #[doc(alias = "jack_port_get_buffer")]
     pub fn audio_out_buffer(&self) -> RefMut<[f32]> {
         assert!(self.port.ptr.flags.is_output() && self.port.ptr.port_type == PortType::Audio);
@@ -145,6 +191,11 @@ impl<'scope, PortData> ProcessPort<'scope, PortData> {
         };
         RefMut::map(refmut, |_| slice)
     }
+    /// Returns a buffer containing MIDI events sent to this port for the current frame period.
+    ///
+    /// # Panics
+    ///
+    /// Panics if port is not a MIDI input port.
     #[doc(alias = "jack_port_get_buffer")]
     pub fn midi_in_buffer(&self) -> MidiInput {
         assert!(self.port.ptr.flags.is_input() && self.port.ptr.port_type == PortType::Midi);
@@ -161,6 +212,12 @@ impl<'scope, PortData> ProcessPort<'scope, PortData> {
             client: PhantomData,
         }
     }
+    /// Returns a buffer for writing MIDI events for the current frame period.
+    ///
+    /// # Panics
+    ///
+    /// Panics if port is not a MIDI output port, or if
+    /// the buffer is still locked by a previous [`RefMut`] returned from this method.
     #[doc(alias = "jack_port_get_buffer")]
     pub fn midi_out_buffer(&self) -> RefMut<MidiWriter> {
         assert!(self.port.ptr.flags.is_output() && self.port.ptr.port_type == PortType::Midi);
@@ -178,6 +235,7 @@ impl<'scope, PortData> ProcessPort<'scope, PortData> {
 
         RefMut::map(refmut, |_| unsafe { std::mem::transmute(port_buffer) })
     }
+    /// Returns the C pointer corresponding to this port.
     #[inline]
     pub fn as_ptr(&self) -> NonNull<sys::jack_port_t> {
         self.port.ptr.port
@@ -192,6 +250,7 @@ pub struct MidiEvent<'p> {
     pub data: &'p [u8],
 }
 
+/// A handle to the MIDI event input buffer that can be iterated, or accessed by index.
 #[repr(transparent)]
 #[derive(Debug)]
 pub struct MidiInput<'p> {
@@ -204,6 +263,7 @@ impl<'p> MidiInput<'p> {
     pub fn len(&self) -> u32 {
         unsafe { library().jack_midi_get_event_count(self.port_buffer.as_ptr()) }
     }
+    /// Returns `true` if the event buffer has <code>[len](Self::len)\() == 0</code>.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -233,6 +293,7 @@ impl<'p> MidiInput<'p> {
     pub fn lost_event_count(&self) -> u32 {
         unsafe { library().jack_midi_get_lost_event_count(self.port_buffer.as_ptr()) }
     }
+    /// Returns an iterator for the MIDI events in this buffer.
     pub fn iter(&self) -> MidiInputIter {
         MidiInputIter {
             port_buffer: self.port_buffer,
@@ -256,6 +317,7 @@ impl<'p> IntoIterator for MidiInput<'p> {
     }
 }
 
+/// An [`Iterator`] implementation for [`MidiEvent`]s stored in an input port buffer.
 #[derive(Debug)]
 pub struct MidiInputIter<'p> {
     port_buffer: NonNull<c_void>,
@@ -294,6 +356,7 @@ impl<'p> std::iter::DoubleEndedIterator for MidiInputIter<'p> {
 impl<'p> std::iter::FusedIterator for MidiInputIter<'p> {}
 impl<'p> std::iter::ExactSizeIterator for MidiInputIter<'p> {}
 
+/// A helper for writing MIDI events into output port buffers.
 #[repr(transparent)]
 #[derive(Debug)]
 pub struct MidiWriter<'p> {
