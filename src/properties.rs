@@ -23,6 +23,18 @@ impl AsRef<CStr> for PropertyKey {
     }
 }
 
+///  Get a property on subject.
+///
+/// Returns a tuple of `(value, type)` where:
+///
+/// - `value` - Set to the value of the property.
+/// - `type` - The type of the property if set, or NULL. See [`Property`] for the discussion
+///   of types.
+///
+/// # Parameters
+///
+/// - `subject` - The subject to get the property from.
+/// - `key` - The key of the property.
 #[doc(alias = "jack_get_property")]
 pub fn property(subject: Uuid, key: impl AsRef<CStr>) -> Result<(CString, Option<CString>)> {
     let mut value = std::ptr::null_mut();
@@ -40,6 +52,7 @@ pub fn property(subject: Uuid, key: impl AsRef<CStr>) -> Result<(CString, Option
     unsafe { Ok((value.as_cstring(), type_.map(|t| t.as_cstring()))) }
 }
 
+/// Get a description of subject.
 #[doc(alias = "jack_get_properties")]
 pub fn properties(subject: Uuid) -> Result<PropertyDescription> {
     let mut desc = MaybeUninit::uninit();
@@ -49,6 +62,14 @@ pub fn properties(subject: Uuid) -> Result<PropertyDescription> {
     Ok(PropertyDescription(unsafe { desc.assume_init() }))
 }
 
+/// A single property (key:value pair).
+///
+/// Although there is no semantics imposed on metadata keys and values, it is much less useful to
+/// use it to associate highly structured data with a port (or client), since this then implies the
+/// need for some (presumably library-based) code to parse the structure and be able to use it.
+///
+/// The real goal of the metadata API is to be able to tag ports (and clients) with small amounts
+/// of data that is outside of the core JACK API but nevertheless useful.
 #[doc(alias = "jack_property_t")]
 #[repr(transparent)]
 #[derive(Debug)]
@@ -58,12 +79,27 @@ unsafe impl Send for Property {}
 unsafe impl Sync for Property {}
 
 impl Property {
+    /// Returns the key of this property (URI string).
     pub fn key(&self) -> &CStr {
         unsafe { CStr::from_ptr(self.0.key) }
     }
+    /// Returns the property value (null-terminated string).
     pub fn data(&self) -> &CStr {
         unsafe { CStr::from_ptr(self.0.data) }
     }
+    /// Returns the type of property data, either a MIME type or URI.
+    ///
+    /// If type is `None` or empty, the data is assumed to be a UTF-8 encoded string
+    /// (`text/plain`). The data is a null-terminated string regardless of type, so values can
+    /// always be copied, but clients should not try to interpret values of an unknown type.
+    ///
+    /// Example values:
+    /// - `image/png;base64` (base64 encoded PNG image)
+    /// - [`http://www.w3.org/2001/XMLSchema#int`] (integer)
+    ///
+    /// Official types are preferred, but clients may use any syntactically valid MIME type (which
+    /// start with a type and slash, like `"text/..."`). If a URI type is used, it must be a complete
+    /// absolute URI (which start with a scheme and colon, like `"http:"`).
     pub fn type_(&self) -> Option<&CStr> {
         if self.0.type_.is_null() {
             return None;
@@ -72,6 +108,9 @@ impl Property {
     }
 }
 
+/// A description of a subject (a set of properties).
+///
+/// The property list can be accessed through the [`Deref`] implementation.
 #[doc(alias = "jack_description_t")]
 #[repr(transparent)]
 #[derive(Debug)]
@@ -107,6 +146,7 @@ impl Drop for PropertyDescription {
 }
 
 #[doc(alias = "jack_get_all_properties")]
+/// Get descriptions for all subjects with metadata.
 pub fn all_properties() -> Result<PropertyDescriptionList> {
     let mut descs = MaybeUninit::uninit();
     let count = unsafe { sys::weak_library()?.jack_get_all_properties(descs.as_mut_ptr()) };

@@ -76,6 +76,30 @@
 //! atomic updating strategy described in the above paragraphs. This crate could be compared to a
 //! complete rewrite of `jack`, with a cleaned-up API.
 
+#![deny(missing_docs)]
+
+// Portions of the JACK documentation are included as comments in the sources to this crate. These
+// comments are licensed under the GNU LGPL 2.1 or later. The copyright notice is included below.
+/*
+  Copyright (C) 2001 Paul Davis
+  Copyright (C) 2004 Jack O'Quin
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU Lesser General Public License as published by
+  the Free Software Foundation; either version 2.1 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+*/
+
 pub mod sys;
 
 mod callbacks;
@@ -97,6 +121,7 @@ pub mod glib;
 #[cfg(feature = "tokio")]
 pub mod tokio;
 
+/// Type used to represent sample frame counts.
 #[doc(alias = "jack_nframes_t")]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -116,12 +141,20 @@ impl From<sys::jack_nframes_t> for Frames {
     }
 }
 
+/// Type used to represent the value of free running monotonic clock with units of microseconds.
 #[doc(alias = "jack_time_t")]
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Time(sys::jack_time_t);
 
 impl Time {
+    /// Returns JACK's current system time in microseconds, using the JACK clock source.
+    ///
+    /// The value returned is guaranteed to be monotonic, but not linear.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the JACK dynamic library failed to load.
     #[doc(alias = "jack_get_time")]
     pub fn now() -> Self {
         Self(unsafe { sys::library().jack_get_time() })
@@ -268,6 +301,7 @@ impl Error {
 /// Result type for [`crate::Error`].
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Status word returned from most JACK operations.
 #[doc(alias = "jack_status_t")]
 #[doc(alias = "JackStatus")]
 #[repr(transparent)]
@@ -314,6 +348,9 @@ impl From<Failure> for sys::jack_status_t {
     }
 }
 
+/// Returns version of the JACK library, in the form of several integers.
+///
+/// The returned tuple corresponds to `(major, minor, micro, proto)`.
 #[doc(alias = "jack_get_version")]
 pub fn version() -> Result<(i32, i32, i32, i32)> {
     let mut major = 0;
@@ -326,21 +363,36 @@ pub fn version() -> Result<(i32, i32, i32, i32)> {
     Ok((major, minor, micro, proto))
 }
 
+/// Returns version of the JACK library, in the form of a string.
+///
+/// Returns a human readable string describing the JACK version being used.
 #[doc(alias = "jack_get_version_string")]
 pub fn version_string() -> Result<&'static std::ffi::CStr> {
     Ok(unsafe { std::ffi::CStr::from_ptr(sys::weak_library()?.jack_get_version_string()) })
 }
 
+/// Returns the maximum number of characters in a JACK client name.
+///
+/// Includes the final `'\0'` character. This value is a constant.
 #[doc(alias = "jack_client_name_size")]
 pub fn client_name_size() -> Result<usize> {
     Ok(unsafe { sys::weak_library()?.jack_client_name_size() as usize })
 }
 
+/// Return the maximum number of characters in a full JACK port name.
+///
+/// Includes the final `'\0'` character. This value is a constant.
+///
+/// A port's full name contains the owning client name concatenated with a colon (`:`) followed by
+/// its short name and a `'\0'` character.
 #[doc(alias = "jack_port_name_size")]
 pub fn port_name_size() -> Result<usize> {
     Ok(unsafe { sys::weak_library()?.jack_port_name_size() as usize })
 }
 
+/// Return the maximum number of characters in a JACK port type name.
+///
+/// Includes the final `'\0'` character. This value is a constant.
 #[doc(alias = "jack_port_type_size")]
 pub fn port_type_size() -> Result<usize> {
     Ok(unsafe { sys::weak_library()?.jack_port_type_size() as usize })

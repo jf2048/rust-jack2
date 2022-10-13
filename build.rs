@@ -23,6 +23,7 @@ fn main() {
         .allowlist_type("Jack.*")
         .allowlist_var("JACK_.*")
         .dynamic_library_name("Jack")
+        .clang_arg("-fretain-comments-from-system-headers")
         .generate()
         .expect("Unable to generate bindings");
 
