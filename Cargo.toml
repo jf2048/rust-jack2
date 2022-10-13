@@ -23,6 +23,18 @@ tokio-stream    = { version = "0.1.10", optional = true }
 bindgen     = "0.59.2"
 system-deps = "6.0.2"
 
+[dev-dependencies]
+clap       = { version = "4.0.14", features = ["derive"] }
+epoxy      = "0.1.0"
+femtovg    = { version = "0.3.5", default-features = false }
+glow       = "0.11.2"
+gtk        = { version = "0.4.8", package = "gtk4" }
+indexmap   = "1.9.1"
+libloading = "0.7.3"
+realfft    = "3.0.1"
+rtrb       = "0.2.2"
+tokio      = { version = "1", features = ["macros", "rt", "signal", "time"] }
+
 [features]
 glib = ["dep:glib"]
 tokio = ["dep:tokio", "dep:tokio-stream"]
@@ -35,3 +47,11 @@ v1_9_19 = { version = "1.9.19" }
 [package.metadata.docs.rs]
 features = ["glib", "tokio"]
 rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "sine"
+required-features = ["tokio"]
+
+[[example]]
+name = "scope"
+required-features = ["glib"]
